@@ -33,7 +33,7 @@ setup(
         'Operating System :: POSIX :: Linux',
         'Programming Language :: Python :: 2.7',
         'Environment :: No Input/Output (Daemon)'],
-    install_requires=[],
+    install_requires=["swift"],
     test_suite='nose.collector',
     tests_require=["nose"],
     scripts=[],
