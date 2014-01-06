@@ -38,14 +38,14 @@ Future work:
 
  * Allow undelete to be enabled only for particular accounts or containers
 
- * Config option to block all DELETEs to trash objects (current behavior is to
-   allow them)
-
  * Move to separate account, not container, for trash. This requires Swift to
    allow cross-account COPY requests.
 
+ * If block_trash_deletes is on, modify the Allow header in responses (both
+   OPTIONS responses and any other 405 response).
+
 """
-from swift.common import http, swob, wsgi
+from swift.common import http, swob, utils, wsgi
 
 DEFAULT_TRASH_PREFIX = ".trash-"
 DEFAULT_TRASH_LIFETIME = 86400 * 90  # 90 days expressed in seconds
@@ -145,10 +145,12 @@ class CopyContext(wsgi.WSGIContext):
 
 class UndeleteMiddleware(object):
     def __init__(self, app, trash_prefix=DEFAULT_TRASH_PREFIX,
-                 trash_lifetime=DEFAULT_TRASH_LIFETIME):
+                 trash_lifetime=DEFAULT_TRASH_LIFETIME,
+                 block_trash_deletes=False):
         self.app = app
         self.trash_prefix = trash_prefix
         self.trash_lifetime = trash_lifetime
+        self.block_trash_deletes = block_trash_deletes
 
     @swob.wsgify
     def __call__(self, req):
@@ -163,7 +165,12 @@ class UndeleteMiddleware(object):
 
         # Okay, this is definitely an object DELETE request; let's see if it's
         # one we want to step in for.
-        if not self.should_save_copy(req.environ, con, obj):
+        if self.is_trash(con) and self.block_trash_deletes:
+            return swob.HTTPMethodNotAllowed(
+                content_type="text/plain",
+                body=("Attempted to delete from a trash container, but "
+                      "block_trash_deletes is enabled\n"))
+        elif not self.should_save_copy(req.environ, con, obj):
             return self.app
 
         trash_container = self.trash_prefix + con
@@ -197,13 +204,19 @@ class UndeleteMiddleware(object):
         ctx.create(req.environ, vrs, account, trash_container,
                    versions=versions_container)
 
+    def is_trash(self, con):
+        """
+        Whether a container is a trash container or not
+        """
+        return con.startswith(self.trash_prefix)
+
     def should_save_copy(self, env, con, obj):
         """
         Determine whether or not we should save a copy of the object prior to
         its deletion. For example, if the object is one that's in a trash
         container, don't save a copy lest we get infinite metatrash recursion.
         """
-        return not con.startswith(self.trash_prefix)
+        return not self.is_trash(con)
 
 
 def filter_factory(global_conf, **local_conf):
@@ -223,8 +236,11 @@ def filter_factory(global_conf, **local_conf):
 
     trash_prefix = conf.get("trash_prefix", DEFAULT_TRASH_PREFIX)
     trash_lifetime = int(conf.get("trash_lifetime", DEFAULT_TRASH_LIFETIME))
+    block_trash_deletes = utils.config_true_value(
+        conf.get('block_trash_deletes', 'off'))
 
     def filt(app):
         return UndeleteMiddleware(app, trash_prefix=trash_prefix,
-                                  trash_lifetime=trash_lifetime)
+                                  trash_lifetime=trash_lifetime,
+                                  block_trash_deletes=block_trash_deletes)
     return filt

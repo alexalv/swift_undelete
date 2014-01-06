@@ -61,16 +61,19 @@ class TestConfigParsing(unittest.TestCase):
 
         self.assertEqual(undelete.trash_prefix, ".trash-")
         self.assertEqual(undelete.trash_lifetime, 86400 * 90)
+        self.assertFalse(undelete.block_trash_deletes)
 
     def test_non_defaults(self):
         app = FakeApp()
         undelete = md.filter_factory({
             'trash_prefix': '.heap__',
-            'trash_lifetime': '31536000'
+            'trash_lifetime': '31536000',
+            'block_trash_deletes': 'on',
         })(app)
 
         self.assertEqual(undelete.trash_prefix, ".heap__")
         self.assertEqual(undelete.trash_lifetime, 31536000)
+        self.assertTrue(undelete.block_trash_deletes)
 
 
 class MiddlewareTestCase(unittest.TestCase):
@@ -315,7 +318,6 @@ class TestObjectDeletion(MiddlewareTestCase):
         Objects in trash containers don't get saved.
         """
         self.app.responses = [{'status': '204 No Content'}]
-
         req = swob.Request.blank('/v1/a/.trash-borkbork/bork')
         req.method = 'DELETE'
 
@@ -323,3 +325,12 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(status, "204 No Content")
         self.assertEqual(self.app.calls,
                          [('DELETE', '/v1/a/.trash-borkbork/bork')])
+
+    def test_delete_from_trash_blocked(self):
+        self.undelete.block_trash_deletes = True
+        req = swob.Request.blank('/v1/a/.trash-borkbork/bork')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "405 Method Not Allowed")
+        self.assertEqual(self.app.calls, [])
