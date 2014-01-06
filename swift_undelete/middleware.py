@@ -38,6 +38,11 @@ Future work:
 
  * allow undelete to be enabled only for particular accounts or containers
 
+ * stick (configurable) object expiration on trash objects
+
+ * config option to block all DELETEs to trash objects (current behavior is to
+   allow them)
+
 """
 
 
@@ -54,10 +59,54 @@ def close_if_possible(maybe_closable):
         return close_method()
 
 
+def friendly_error(orig_error):
+    return "Error copying object to trash:\n" + orig_error
+
+
+class ContainerContext(wsgi.WSGIContext):
+    """
+    Helper class to perform a container PUT request.
+    """
+
+    def create(self, env, vrs, account, container, versions=None):
+        """
+        Perform a container PUT request
+
+        :param env: WSGI environment for original request
+        :param vrs: API version, e.g. "v1"
+        :param account: account in which to create the container
+        :param container: container name
+        :param versions: value for X-Versions-Location header
+            (for container versioning)
+
+        :returns: None
+        :raises: HTTPException on failure (non-2xx response)
+        """
+        env = env.copy()
+        env['REQUEST_METHOD'] = 'PUT'
+        env["PATH_INFO"] = "/%s/%s/%s" % (vrs, account, container)
+        if versions:
+            env['HTTP_X_VERSIONS_LOCATION'] = versions
+
+        resp_iter = self._app_call(env)
+        # The body of a PUT response is either empty or very short (e.g. error
+        # message), so we can get away with slurping the whole thing.
+        body = ''.join(resp_iter)
+        close_if_possible(resp_iter)
+
+        status_int = int(self._response_status.split(' ', 1)[0])
+        if not http.is_success(status_int):
+            raise swob.HTTPException(
+                status=self._response_status,
+                headers=self._response_headers,
+                body=friendly_error(body))
+
+
 class CopyContext(wsgi.WSGIContext):
     """
     Helper class to perform an object COPY request.
     """
+
     def copy(self, env, destination_container, destination_object):
         """
         Perform a COPY from source to destination
@@ -108,19 +157,35 @@ class UndeleteMiddleware(object):
             return self.app
 
         trash_container = self.trash_prefix + con
-        copy_status, copy_headers, copy_body = CopyContext(self.app).copy(
-            req.environ, trash_container, obj)
+        copy_status, copy_headers, copy_body = self.copy_object(
+            req, trash_container, obj)
         if copy_status == 404:
-            # container's not there, so we'll have to go create it first
-            raise NotImplementedError("container creation")
+            self.create_trash_container(req, vrs, acc, trash_container)
+            copy_status, copy_headers, copy_body = self.copy_object(
+                req, trash_container, obj)
         elif not http.is_success(copy_status):
             # other error; propagate this to the client
             return swob.Response(
-                body="Error copying object to trash:\n" + copy_body,
+                body=friendly_error(copy_body),
                 status=copy_status,
                 headers=copy_headers)
 
         return self.app
+
+    def copy_object(self, req, trash_container, obj):
+        return CopyContext(self.app).copy(req.environ, trash_container, obj)
+
+    def create_trash_container(self, req, vrs, account, trash_container):
+        """
+        Create a trash container and its associated versions container.
+
+        :raises HTTPException: if container creation failed
+        """
+        ctx = ContainerContext(self.app)
+        versions_container = trash_container + "-versions"
+        ctx.create(req.environ, vrs, account, versions_container)
+        ctx.create(req.environ, vrs, account, trash_container,
+                   versions=versions_container)
 
     def should_save_copy(self, env, con, obj):
         """

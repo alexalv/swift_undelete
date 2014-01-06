@@ -38,6 +38,14 @@ class FakeApp(object):
         return [x[:2] for x in self._calls]
 
     @property
+    def call_headers(self):
+        """
+        Returns the list of headers received by this application as it was
+        called
+        """
+        return [x[2] for x in self._calls]
+
+    @property
     def calls_with_headers(self):
         """
         Returns the calls received by this application as a list of
@@ -111,7 +119,39 @@ class TestPassthrough(MiddlewareTestCase):
 
 class TestObjectDeletion(MiddlewareTestCase):
     def test_deleting_nonexistent_object(self):
-        pass
+        # If the object isn't there, ignore the 404 on COPY and pass the
+        # DELETE request through. It might be an expired object, in which case
+        # the object DELETE will actually get it out of the container listing
+        # and free up some space.
+        self.app.responses = [
+            # COPY request
+            {'status': '404 Not Found'},
+            # trash-versions container creation request
+            #
+            # Ideally we'd skip this stuff, but we can't tell the difference
+            # between object-not-found (404) and
+            # destination-container-not-found (also 404).
+            {'status': '202 Accepted'},
+            # trash container creation request
+            {'status': '202 Accepted'},
+            # second COPY attempt:
+            {'status': '404 Not Found'},
+            # DELETE request
+            {'status': '404 Not Found',
+             'headers': [('X-Exophagous', 'ungrassed')]}]
+
+        req = swob.Request.blank('/v1/a/elements/Cf')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "404 Not Found")
+        self.assertEqual(headers.get('X-Exophagous'), 'ungrassed')
+        self.assertEqual(self.app.calls,
+                         [('COPY', '/v1/a/elements/Cf'),
+                          ('PUT', '/v1/a/.trash-elements-versions'),
+                          ('PUT', '/v1/a/.trash-elements'),
+                          ('COPY', '/v1/a/elements/Cf'),
+                          ('DELETE', '/v1/a/elements/Cf')])
 
     def test_copy_to_existing_trash_container(self):
         self.app.responses = [
@@ -145,7 +185,94 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(method, 'DELETE')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
 
+    def test_copy_to_missing_trash_container(self):
+        self.app.responses = [
+            # first COPY attempt: trash container doesn't exist
+            {'status': '404 Not Found'},
+            # trash-versions container creation request
+            {'status': '201 Created'},
+            # trash container creation request
+            {'status': '201 Created'},
+            # second COPY attempt:
+            {'status': '404 Not Found'},
+            # DELETE request
+            {'status': '204 No Content'}]
+
+        req = swob.Request.blank('/v1/a/elements/Lv')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "204 No Content")
+        self.assertEqual(self.app.calls,
+                         [('COPY', '/v1/a/elements/Lv'),
+                          ('PUT', '/v1/a/.trash-elements-versions'),
+                          ('PUT', '/v1/a/.trash-elements'),
+                          ('COPY', '/v1/a/elements/Lv'),
+                          ('DELETE', '/v1/a/elements/Lv')])
+
+    def test_copy_error(self):
+        self.app.responses = [
+            # COPY attempt: some mysterious error with some headers
+            {'status': '503 Service Unavailable',
+             'headers': [('X-Scraggedness', 'Goclenian')],
+             'body_iter': ['dunno what happened boss']}]
+
+        req = swob.Request.blank('/v1/a/elements/Te')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "503 Service Unavailable")
+        self.assertEqual(headers.get('X-Scraggedness'), 'Goclenian')
+        self.assertIn('what happened', body)
+        self.assertEqual(self.app.calls, [('COPY', '/v1/a/elements/Te')])
+
+    def test_copy_missing_trash_container_error_creating_vrs_container(self):
+        self.app.responses = [
+            # first COPY attempt: trash container doesn't exist
+            {'status': '404 Not Found'},
+            # trash-versions container creation request: failure!
+            {'status': '403 Forbidden',
+             'headers': [('X-Pupillidae', 'Barry')],
+             'body_iter': ['oh hell no']}]
+
+        req = swob.Request.blank('/v1/a/elements/U')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "403 Forbidden")
+        self.assertEqual(headers.get('X-Pupillidae'), 'Barry')
+        self.assertIn('oh hell no', body)
+        self.assertEqual(self.app.calls,
+                         [('COPY', '/v1/a/elements/U'),
+                          ('PUT', '/v1/a/.trash-elements-versions')])
+
+    def test_copy_missing_trash_container_error_creating_container(self):
+        self.app.responses = [
+            # first COPY attempt: trash container doesn't exist
+            {'status': '404 Not Found'},
+            # trash-versions container creation request
+            {'status': '201 Created'},
+            # trash container creation request: fails!
+            {'status': "418 I'm a teapot",
+             'headers': [('X-Body-Type', 'short and stout')],
+             'body_iter': ['here is my handle, here is my spout']}]
+
+        req = swob.Request.blank('/v1/a/elements/Mo')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "418 I'm a teapot")
+        self.assertEqual(headers.get('X-Body-Type'), 'short and stout')
+        self.assertIn('spout', body)
+        self.assertEqual(self.app.calls,
+                         [('COPY', '/v1/a/elements/Mo'),
+                          ('PUT', '/v1/a/.trash-elements-versions'),
+                          ('PUT', '/v1/a/.trash-elements')])
+
     def test_delete_from_trash(self):
+        """
+        Objects in trash containers don't get saved.
+        """
         self.app.responses = [{'status': '204 No Content'}]
 
         req = swob.Request.blank('/v1/a/.trash-borkbork/bork')
