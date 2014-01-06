@@ -54,6 +54,25 @@ class FakeApp(object):
         return self._calls
 
 
+class TestConfigParsing(unittest.TestCase):
+    def test_defaults(self):
+        app = FakeApp()
+        undelete = md.filter_factory({})(app)
+
+        self.assertEqual(undelete.trash_prefix, ".trash-")
+        self.assertEqual(undelete.trash_lifetime, 86400 * 90)
+
+    def test_non_defaults(self):
+        app = FakeApp()
+        undelete = md.filter_factory({
+            'trash_prefix': '.heap__',
+            'trash_lifetime': '31536000'
+        })(app)
+
+        self.assertEqual(undelete.trash_prefix, ".heap__")
+        self.assertEqual(undelete.trash_lifetime, 31536000)
+
+
 class MiddlewareTestCase(unittest.TestCase):
     """
     Just a base class for other test cases. Some setup, some utility methods.
@@ -154,6 +173,7 @@ class TestObjectDeletion(MiddlewareTestCase):
                           ('DELETE', '/v1/a/elements/Cf')])
 
     def test_copy_to_existing_trash_container(self):
+        self.undelete.trash_lifetime = 1997339
         self.app.responses = [
             # COPY request
             {'status': '201 Created',
@@ -178,12 +198,33 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(method, 'COPY')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
         self.assertEqual(headers['Destination'], '.trash-cats/kittens.jpg')
+        self.assertEqual(headers['X-Delete-After'], str(1997339))
 
         # Second, we actually perform the DELETE request (and send that
         # response to the client unaltered)
         method, path, headers = self.app.calls_with_headers[1]
         self.assertEqual(method, 'DELETE')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
+
+    def test_copy_to_existing_trash_container_no_expiration(self):
+        self.undelete.trash_lifetime = 0
+        self.app.responses = [
+            # COPY request
+            {'status': '201 Created'},
+            # DELETE request
+            {'status': '204 No Content'}]
+
+        req = swob.Request.blank('/v1/MY_account/cats/kittens.jpg')
+        req.method = 'DELETE'
+
+        status, headers, body = self.call_mware(req)
+        self.assertEqual(status, "204 No Content")
+        self.assertEqual(2, len(self.app.calls))
+
+        method, path, headers = self.app.calls_with_headers[0]
+        self.assertEqual(method, 'COPY')
+        self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
+        self.assertNotIn('X-Delete-After', headers)
 
     def test_copy_to_missing_trash_container(self):
         self.app.responses = [

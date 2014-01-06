@@ -36,17 +36,19 @@ Caveats:
 
 Future work:
 
- * allow undelete to be enabled only for particular accounts or containers
+ * Allow undelete to be enabled only for particular accounts or containers
 
- * stick (configurable) object expiration on trash objects
-
- * config option to block all DELETEs to trash objects (current behavior is to
+ * Config option to block all DELETEs to trash objects (current behavior is to
    allow them)
 
+ * Move to separate account, not container, for trash. This requires Swift to
+   allow cross-account COPY requests.
+
 """
-
-
 from swift.common import http, swob, wsgi
+
+DEFAULT_TRASH_PREFIX = ".trash-"
+DEFAULT_TRASH_LIFETIME = 86400 * 90  # 90 days expressed in seconds
 
 
 # Helper method stolen from a pending Swift change in Gerrit.
@@ -107,9 +109,10 @@ class CopyContext(wsgi.WSGIContext):
     Helper class to perform an object COPY request.
     """
 
-    def copy(self, env, destination_container, destination_object):
+    def copy(self, env, destination_container, destination_object,
+             delete_after=None):
         """
-        Perform a COPY from source to destination
+        Perform a COPY from source to destination.
 
         :param env: WSGI environment for a request aimed at the source
             object.
@@ -117,14 +120,19 @@ class CopyContext(wsgi.WSGIContext):
             Note: this must not contain any slashes or the request is
             guaranteed to fail.
         :param destination_object: destination object name
+        :param delete_after: value of X-Delete-After; object will be deleted
+                             after that many seconds have elapsed. Set to 0 or
+                             None to keep the object forever.
 
         :returns: 3-tuple (HTTP status code, response headers,
                            full response body)
         """
         env = env.copy()
         env['REQUEST_METHOD'] = 'COPY'
-        env['HTTP_DESTINATION'] = '/'.join((destination_container,
-                                           destination_object))
+        env['HTTP_DESTINATION'] = '/'.join(
+            (destination_container, destination_object))
+        if delete_after:
+            env['HTTP_X_DELETE_AFTER'] = str(delete_after)
         resp_iter = self._app_call(env)
         # The body of a COPY response is either empty or very short (e.g.
         # error message), so we can get away with slurping the whole thing.
@@ -136,9 +144,11 @@ class CopyContext(wsgi.WSGIContext):
 
 
 class UndeleteMiddleware(object):
-    def __init__(self, app, trash_prefix):
+    def __init__(self, app, trash_prefix=DEFAULT_TRASH_PREFIX,
+                 trash_lifetime=DEFAULT_TRASH_LIFETIME):
         self.app = app
         self.trash_prefix = trash_prefix
+        self.trash_lifetime = trash_lifetime
 
     @swob.wsgify
     def __call__(self, req):
@@ -169,11 +179,11 @@ class UndeleteMiddleware(object):
                 body=friendly_error(copy_body),
                 status=copy_status,
                 headers=copy_headers)
-
         return self.app
 
     def copy_object(self, req, trash_container, obj):
-        return CopyContext(self.app).copy(req.environ, trash_container, obj)
+        return CopyContext(self.app).copy(req.environ, trash_container, obj,
+                                          self.trash_lifetime)
 
     def create_trash_container(self, req, vrs, account, trash_container):
         """
@@ -204,13 +214,17 @@ def filter_factory(global_conf, **local_conf):
 
     # value to prepend to the account in order to compute the trash location
     trash_prefix = ".trash-"
-
+    # how long, in seconds, trash objects should live before expiring. Set to 0
+    # to keep trash objects forever.
+    trash_lifetime = 7776000  # 90 days
     """
     conf = global_conf.copy()
     conf.update(local_conf)
 
-    trash_prefix = conf.get("trash_prefix", ".trash-")
+    trash_prefix = conf.get("trash_prefix", DEFAULT_TRASH_PREFIX)
+    trash_lifetime = int(conf.get("trash_lifetime", DEFAULT_TRASH_LIFETIME))
 
     def filt(app):
-        return UndeleteMiddleware(app, trash_prefix)
+        return UndeleteMiddleware(app, trash_prefix=trash_prefix,
+                                  trash_lifetime=trash_lifetime)
     return filt
