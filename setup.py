@@ -16,7 +16,7 @@
 
 from setuptools import setup, find_packages
 
-version = "0.0.1"
+version = "__VERSION__"
 
 setup(
     name="swift_undelete",
@@ -25,7 +25,7 @@ setup(
     license='Apache License (2.0)',
     author='Samuel N. Merritt',
     author_email='sam@swiftstack.com',
-    url='https://github.com/swiftstack/swift-undelete',
+    url='https://github.com/swiftstack/swift_undelete',
     packages=find_packages(),
     classifiers=[
         'Development Status :: 4 - Beta',
