@@ -33,7 +33,10 @@ setup(
         'Operating System :: POSIX :: Linux',
         'Programming Language :: Python :: 2.7',
         'Environment :: No Input/Output (Daemon)'],
-    install_requires=["swift"],
+    # Ubuntu packaging incorrectly detects this as a dependency on the
+    # "python-swift" package, which SwiftStack doesn't use.  So commenting this
+    # out so SwiftStack can still use ${python:Depends}
+    #install_requires=["swift"],
     test_suite='nose.collector',
     tests_require=["nose"],
     scripts=[],
