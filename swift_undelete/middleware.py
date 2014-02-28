@@ -131,6 +131,12 @@ class CopyContext(wsgi.WSGIContext):
         env['REQUEST_METHOD'] = 'COPY'
         env['HTTP_DESTINATION'] = '/'.join(
             (destination_container, destination_object))
+        qs = env.get('QUERY_STRING', '')
+        if qs:
+            qs += '&multipart-manifest=get'
+        else:
+            qs = 'multipart-manifest=get'
+        env['QUERY_STRING'] = qs
         if delete_after:
             env['HTTP_X_DELETE_AFTER'] = str(delete_after)
         resp_iter = self._app_call(env)
