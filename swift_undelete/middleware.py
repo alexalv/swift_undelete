@@ -153,7 +153,7 @@ class HeadContext(wsgi.WSGIContext):
 
     def headers(self, env, vrs, acc, con):
         """
-        Determine whether or not we should process this container
+        Return meta headers
         """
         env = env.copy()
         env['REQUEST_METHOD'] = 'HEAD'
@@ -186,7 +186,8 @@ class UndeleteMiddleware(object):
             return self.app
 
         #print req.environ
-        print HeadContext(self.app).headers(req.environ,vrs,acc,con)
+        if not self.is_trashable(req,vrs,acc,con):
+            return self.app            
 
         # Okay, this is definitely an object DELETE request; let's see if it's
         # one we want to step in for.
@@ -212,6 +213,12 @@ class UndeleteMiddleware(object):
                 status=copy_status,
                 headers=copy_headers)
         return self.app
+
+    def is_trashable(self,req,vrs,acc,con):
+        """
+        Checking if multistep removal header added to requested container
+        """
+        return ('X-Container-Meta-Undelete-Enabled','true') in HeadContext(self.app).headers(req.environ,vrs,acc,con)
 
     def copy_object(self, req, trash_container, obj):
         return CopyContext(self.app).copy(req.environ, trash_container, obj,

@@ -193,7 +193,10 @@ class TestObjectDeletion(MiddlewareTestCase):
     def test_copy_to_existing_trash_container(self):
         self.undelete.trash_lifetime = 1997339
         self.app.responses = [
-            # COPY request
+            # HEAD request
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled', 'true')]},
+            # COPY
             {'status': '201 Created',
              'headers': [('X-Sir-Not-Appearing-In-This-Response', 'yup')]},
             # DELETE request
