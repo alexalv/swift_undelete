@@ -148,6 +148,22 @@ class CopyContext(wsgi.WSGIContext):
         status_int = int(self._response_status.split(' ', 1)[0])
         return (status_int, self._response_headers, body)
 
+
+class HeadContext(wsgi.WSGIContext):
+
+    def head(self, env, vrs, acc, con):
+        """
+        Determine whether or not we should process this container
+        """
+        env = env.copy()
+        env['REQUEST_METHOD'] = 'HEAD'
+        env['HTTP_DESTINATION'] = '/'.join(
+            (vrs,acc,con))
+        resp_iter = self._app_call(env)
+        status_int = int(self.app._response_status.split(' ', 1)[0])
+        headers = self._response_headers
+        return headers
+
 class UndeleteMiddleware(object):
     def __init__(self, app, trash_prefix=DEFAULT_TRASH_PREFIX,
                  trash_lifetime=DEFAULT_TRASH_LIFETIME,
@@ -168,7 +184,7 @@ class UndeleteMiddleware(object):
             # not an object request
             return self.app
 
-        if not self.should_be_processed(req.environ,vrs,acc,con):
+        if not HeadContext(self.app).head(req.environ,vrs,acc,con)['HTTP_X_CONTAINER_META_UNDELETE_ENABLED']:
             return self.app
 
         # Okay, this is definitely an object DELETE request; let's see if it's
@@ -218,19 +234,6 @@ class UndeleteMiddleware(object):
         """
         return con.startswith(self.trash_prefix)
 
-
-    def should_be_processed(self, env, vrs, acc, con):
-        """
-        Determine whether or not we should process this container
-        """
-        env = env.copy()
-        env['REQUEST_METHOD'] = 'HEAD'
-        env['HTTP_DESTINATION'] = '/'.join(
-            (vrs,acc,con))
-        resp_iter = self.app._app_call(env)
-        status_int = int(self.app._response_status.split(' ', 1)[0])
-        headers = self.app._response_headers
-        return headers['X-Container-Meta-Undelete-Enabled']
 
     def should_save_copy(self, env, con, obj):
         """
