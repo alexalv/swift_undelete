@@ -185,7 +185,8 @@ class UndeleteMiddleware(object):
             # not an object request
             return self.app
 
-        #print req.environ
+        #If X-Container-Meta-Undelete-Enabled:true is not set, then no action
+        #required, so we step aside
         if not self.is_trashable(req,vrs,acc,con):
             return self.app            
 
