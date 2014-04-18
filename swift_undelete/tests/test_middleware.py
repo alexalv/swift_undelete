@@ -209,7 +209,7 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertNotIn('X-Sir-Not-Appearing-In-This-Response', headers)
         self.assertEqual(headers['X-Decadation'], 'coprose')
 
-        self.assertEqual(2, len(self.app.calls))
+        self.assertEqual(3, len(self.app.calls))
 
         # First, we performed a COPY request to save the object into the trash.
         method, path, headers = self.app.calls_with_headers[0]
@@ -324,7 +324,8 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(headers.get('X-Body-Type'), 'short and stout')
         self.assertIn('spout', body)
         self.assertEqual(self.app.calls,
-                         [('COPY', '/v1/a/elements/Mo'),
+                         [('HEAD', '/v1/a/elements/Mo'),
+                          ('COPY', '/v1/a/elements/Mo'),
                           ('PUT', '/v1/a/.trash-elements-versions'),
                           ('PUT', '/v1/a/.trash-elements')])
 
@@ -339,7 +340,7 @@ class TestObjectDeletion(MiddlewareTestCase):
         status, headers, body = self.call_mware(req)
         self.assertEqual(status, "204 No Content")
         self.assertEqual(self.app.calls,
-                         [('DELETE', '/v1/a/.trash-borkbork/bork')])
+                         [('HEAD', '/v1/a/.trash-borkbork/bork'), ('DELETE', '/v1/a/.trash-borkbork/bork')])
 
     def test_delete_from_trash_blocked(self):
         self.undelete.block_trash_deletes = True

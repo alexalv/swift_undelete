@@ -151,7 +151,7 @@ class CopyContext(wsgi.WSGIContext):
 
 class HeadContext(wsgi.WSGIContext):
 
-    def head(self, env, vrs, acc, con):
+    def headers(self, env, vrs, acc, con):
         """
         Determine whether or not we should process this container
         """
@@ -160,9 +160,10 @@ class HeadContext(wsgi.WSGIContext):
         env['HTTP_DESTINATION'] = '/'.join(
             (vrs,acc,con))
         resp_iter = self._app_call(env)
-        status_int = int(self.app._response_status.split(' ', 1)[0])
-        headers = self._response_headers
-        return headers
+        body = ''.join(resp_iter)
+        close_if_possible(resp_iter)
+        status_int = int(self._response_status.split(' ', 1)[0])
+        return self._response_headers
 
 class UndeleteMiddleware(object):
     def __init__(self, app, trash_prefix=DEFAULT_TRASH_PREFIX,
@@ -184,8 +185,8 @@ class UndeleteMiddleware(object):
             # not an object request
             return self.app
 
-        if not HeadContext(self.app).head(req.environ,vrs,acc,con)['HTTP_X_CONTAINER_META_UNDELETE_ENABLED']:
-            return self.app
+        #print req.environ
+        print HeadContext(self.app).headers(req.environ,vrs,acc,con)
 
         # Okay, this is definitely an object DELETE request; let's see if it's
         # one we want to step in for.
