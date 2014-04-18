@@ -169,6 +169,9 @@ class UndeleteMiddleware(object):
             # not an object request
             return self.app
 
+        if not should_be_processed(vrs,acc,con):
+            return self.app
+
         # Okay, this is definitely an object DELETE request; let's see if it's
         # one we want to step in for.
         if self.is_trash(con) and self.block_trash_deletes:
@@ -215,6 +218,17 @@ class UndeleteMiddleware(object):
         Whether a container is a trash container or not
         """
         return con.startswith(self.trash_prefix)
+
+
+    def should_be_processed(self,vrs, acc, con):
+        env = env.copy()
+        env['REQUEST_METHOD'] = 'HEAD'
+        env['HTTP_DESTINATION'] = '/'.join(
+            (vrs,acc,con))
+        resp_iter = self._app_call(env)
+        status_int = int(self._response_status.split(' ', 1)[0])
+        headers = self._response_headers
+        return headers['X-Container-Meta-Undelete-Enabled']
 
     def should_save_copy(self, env, con, obj):
         """
