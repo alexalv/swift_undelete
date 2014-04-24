@@ -27,7 +27,6 @@ class FakeApp(object):
 
     def __call__(self, env, start_response):
         req = swob.Request(env)
-
         self._calls.append((
             req.method, req.path,
             # mutable dict; keep a copy so subsequent calls can't change it
@@ -161,6 +160,8 @@ class TestObjectDeletion(MiddlewareTestCase):
         # the object DELETE will actually get it out of the container listing
         # and free up some space.
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled','true')]},
             # COPY request
             {'status': '404 Not Found'},
             # trash-versions container creation request
@@ -184,7 +185,8 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(status, "404 Not Found")
         self.assertEqual(headers.get('X-Exophagous'), 'ungrassed')
         self.assertEqual(self.app.calls,
-                         [('COPY', '/v1/a/elements/Cf'),
+                         [('HEAD', '/v1/a/elements'),
+                          ('COPY', '/v1/a/elements/Cf'),
                           ('PUT', '/v1/a/.trash-elements-versions'),
                           ('PUT', '/v1/a/.trash-elements'),
                           ('COPY', '/v1/a/elements/Cf'),
@@ -215,7 +217,7 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(3, len(self.app.calls))
 
         # First, we performed a COPY request to save the object into the trash.
-        method, path, headers = self.app.calls_with_headers[0]
+        method, path, headers = self.app.calls_with_headers[1]
         self.assertEqual(method, 'COPY')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
         self.assertEqual(headers['Destination'], '.trash-cats/kittens.jpg')
@@ -223,13 +225,15 @@ class TestObjectDeletion(MiddlewareTestCase):
 
         # Second, we actually perform the DELETE request (and send that
         # response to the client unaltered)
-        method, path, headers = self.app.calls_with_headers[1]
+        method, path, headers = self.app.calls_with_headers[2]
         self.assertEqual(method, 'DELETE')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
 
     def test_copy_to_existing_trash_container_no_expiration(self):
         self.undelete.trash_lifetime = 0
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled', 'true')]},
             # COPY request
             {'status': '201 Created'},
             # DELETE request
@@ -240,15 +244,17 @@ class TestObjectDeletion(MiddlewareTestCase):
 
         status, headers, body = self.call_mware(req)
         self.assertEqual(status, "204 No Content")
-        self.assertEqual(2, len(self.app.calls))
+        self.assertEqual(3, len(self.app.calls))
 
-        method, path, headers = self.app.calls_with_headers[0]
+        method, path, headers = self.app.calls_with_headers[1]
         self.assertEqual(method, 'COPY')
         self.assertEqual(path, '/v1/MY_account/cats/kittens.jpg')
         self.assertNotIn('X-Delete-After', headers)
 
     def test_copy_to_missing_trash_container(self):
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled','true')]},
             # first COPY attempt: trash container doesn't exist
             {'status': '404 Not Found'},
             # trash-versions container creation request
@@ -266,7 +272,8 @@ class TestObjectDeletion(MiddlewareTestCase):
         status, headers, body = self.call_mware(req)
         self.assertEqual(status, "204 No Content")
         self.assertEqual(self.app.calls,
-                         [('COPY', '/v1/a/elements/Lv'),
+                         [('HEAD', '/v1/a/elements'),
+                          ('COPY', '/v1/a/elements/Lv'),
                           ('PUT', '/v1/a/.trash-elements-versions'),
                           ('PUT', '/v1/a/.trash-elements'),
                           ('COPY', '/v1/a/elements/Lv'),
@@ -274,6 +281,8 @@ class TestObjectDeletion(MiddlewareTestCase):
 
     def test_copy_error(self):
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled','true')]},
             # COPY attempt: some mysterious error with some headers
             {'status': '503 Service Unavailable',
              'headers': [('X-Scraggedness', 'Goclenian')],
@@ -286,10 +295,12 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(status, "503 Service Unavailable")
         self.assertEqual(headers.get('X-Scraggedness'), 'Goclenian')
         self.assertIn('what happened', body)
-        self.assertEqual(self.app.calls, [('COPY', '/v1/a/elements/Te')])
+        self.assertEqual(self.app.calls, [('HEAD', '/v1/a/elements'), ('COPY', '/v1/a/elements/Te')])
 
     def test_copy_missing_trash_container_error_creating_vrs_container(self):
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled','true')]},
             # first COPY attempt: trash container doesn't exist
             {'status': '404 Not Found'},
             # trash-versions container creation request: failure!
@@ -305,11 +316,14 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(headers.get('X-Pupillidae'), 'Barry')
         self.assertIn('oh hell no', body)
         self.assertEqual(self.app.calls,
-                         [('COPY', '/v1/a/elements/U'),
+                         [('HEAD', '/v1/a/elements'),
+                          ('COPY', '/v1/a/elements/U'),
                           ('PUT', '/v1/a/.trash-elements-versions')])
 
     def test_copy_missing_trash_container_error_creating_container(self):
         self.app.responses = [
+            {'status': '204 No Content',
+             'headers': [('X-Container-Meta-Undelete-Enabled','true')]},
             # first COPY attempt: trash container doesn't exist
             {'status': '404 Not Found'},
             # trash-versions container creation request
@@ -327,7 +341,7 @@ class TestObjectDeletion(MiddlewareTestCase):
         self.assertEqual(headers.get('X-Body-Type'), 'short and stout')
         self.assertIn('spout', body)
         self.assertEqual(self.app.calls,
-                         [('HEAD', '/v1/a/elements/Mo'),
+                         [('HEAD', '/v1/a/elements'),
                           ('COPY', '/v1/a/elements/Mo'),
                           ('PUT', '/v1/a/.trash-elements-versions'),
                           ('PUT', '/v1/a/.trash-elements')])
@@ -343,13 +357,15 @@ class TestObjectDeletion(MiddlewareTestCase):
         status, headers, body = self.call_mware(req)
         self.assertEqual(status, "204 No Content")
         self.assertEqual(self.app.calls,
-                         [('HEAD', '/v1/a/.trash-borkbork/bork'), ('DELETE', '/v1/a/.trash-borkbork/bork')])
+                         [('HEAD', '/v1/a/.trash-borkbork'), ('DELETE', '/v1/a/.trash-borkbork/bork')])
 
     def test_delete_from_trash_blocked(self):
+        self.app.responses = [{'status': '204 No Content',
+                               'headers': [('X-Container-Meta-Undelete-Enabled','true')]}]
         self.undelete.block_trash_deletes = True
         req = swob.Request.blank('/v1/a/.trash-borkbork/bork')
         req.method = 'DELETE'
 
         status, headers, body = self.call_mware(req)
         self.assertEqual(status, "405 Method Not Allowed")
-        self.assertEqual(self.app.calls, [])
+        self.assertEqual(self.app.calls, [('HEAD', '/v1/a/.trash-borkbork')])

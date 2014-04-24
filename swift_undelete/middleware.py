@@ -150,19 +150,21 @@ class CopyContext(wsgi.WSGIContext):
 
 
 class HeadContext(wsgi.WSGIContext):
-
+    """
+    Helper class to perform container HEAD request
+    """
     def headers(self, env, vrs, acc, con):
         """
         Return meta headers
         """
         env = env.copy()
         env['REQUEST_METHOD'] = 'HEAD'
-        env['HTTP_DESTINATION'] = '/'.join(
+        env['PATH_INFO'] = '/'+'/'.join(
             (vrs,acc,con))
         resp_iter = self._app_call(env)
-        body = ''.join(resp_iter)
+        
         close_if_possible(resp_iter)
-        status_int = int(self._response_status.split(' ', 1)[0])
+        
         return self._response_headers
 
 class UndeleteMiddleware(object):
